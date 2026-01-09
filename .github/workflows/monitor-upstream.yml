@@ -30,8 +30,8 @@ jobs:
       - name: Push New Tag
         if: steps.check.outputs.new_version == 'true'
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
           
           if [[ -n "${{ secrets.TOKEN }}" ]]; then
             git remote set-url origin https://${{ secrets.TOKEN }}@github.com/${{ github.repository }}.git
