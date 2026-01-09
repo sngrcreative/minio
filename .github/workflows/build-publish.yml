@@ -38,13 +38,41 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Check for Canary Changes
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            # Get latest upstream commit
+            UPSTREAM_SHA=$(git ls-remote https://github.com/minio/minio.git refs/heads/master | cut -f1)
+            echo "Upstream SHA: $UPSTREAM_SHA"
+            
+            # Get current image commit (using skopeo to avoid pulling 50MB+)
+            # We check the 'standard' flavor as the baseline for all canary builds
+            CURRENT_SHA=$(skopeo inspect docker://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:canary --format '{{index .Labels "org.opencontainers.image.revision"}}' || echo "none")
+            echo "Current Image SHA: $CURRENT_SHA"
+
+            if [[ "$UPSTREAM_SHA" == "$CURRENT_SHA" ]]; then
+              echo "No changes detected. Skipping build."
+              echo "skip=true" >> $GITHUB_OUTPUT
+            else
+              echo "Changes detected or image missing."
+              echo "skip=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Release build or manual dispatch. Proceeding."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set up QEMU
+        if: steps.check.outputs.skip != 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        if: steps.check.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
+        if: steps.check.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -52,6 +80,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Determine Tags
+        if: steps.check.outputs.skip != 'true'
         id: meta
         run: |
           SUFFIX="${{ matrix.suffix }}"
@@ -60,23 +89,28 @@ jobs:
             echo "MINIO_REF=$TAG" >> $GITHUB_ENV
             echo "TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}${SUFFIX},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest${SUFFIX}" >> $GITHUB_ENV
           else
+            UPSTREAM_SHA=$(git ls-remote https://github.com/minio/minio.git refs/heads/master | cut -f1)
             echo "MINIO_REF=master" >> $GITHUB_ENV
+            echo "UPSTREAM_SHA=$UPSTREAM_SHA" >> $GITHUB_ENV
             echo "TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:canary${SUFFIX}" >> $GITHUB_ENV
           fi
 
       - name: Generate Dockerfile
+        if: steps.check.outputs.skip != 'true'
         run: |
           cat <<EOF > Dockerfile
-          FROM golang:1.24-alpine AS builder
+          # Use BuildPlatform optimization for faster cross-compilation
+          FROM --platform=\$BUILDPLATFORM golang:1.24-alpine AS builder
           ENV CGO_ENABLED=0 GOOS=linux
           ARG TARGETARCH
           WORKDIR /build
           RUN apk add --no-cache git
-          RUN git clone https://github.com/minio/minio.git . && git checkout \${{ env.MINIO_REF }}
+          RUN git clone https://github.com/minio/minio.git . && git checkout ${{ env.MINIO_REF }}
           RUN GOARCH=\$TARGETARCH go build -ldflags="-s -w" -o minio .
           RUN mkdir /data
 
           FROM ${{ matrix.base }}
+          LABEL org.opencontainers.image.revision="${{ env.UPSTREAM_SHA }}"
           COPY --from=builder /build/minio /usr/bin/minio
           COPY --from=builder --chown=65532:65532 /data /data
           USER 65532:65532
@@ -86,9 +120,11 @@ jobs:
           EOF
 
       - name: Build and Push
+        if: steps.check.outputs.skip != 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: Dockerfile
           push: true
           tags: ${{ env.TAGS }}
           platforms: linux/amd64,linux/arm64
@@ -97,6 +133,10 @@ jobs:
 
   test-image:
     needs: build-push
+    # Only run tests if we actually built something
+    if: |
+      always() && 
+      needs.build-push.result == 'success'
     runs-on: ubuntu-latest
     strategy:
       matrix:
