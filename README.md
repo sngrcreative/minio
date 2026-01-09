@@ -20,10 +20,10 @@ All images in this repository are built with **`GOEXPERIMENT=boringcrypto`** ena
 
 | Tag | Base Image | Description |
 | :--- | :--- | :--- |
-| `latest` | [Distroless Static](https://github.com/GoogleContainerTools/distroless) | **Recommended.** FIPS-compliant. Minimal production image. Non-root, no shell. |
-| `canary` | Distroless Static | Bleeding edge build from MinIO master branch. FIPS-compliant. |
-| `*-secure` | [Chainguard Static](https://github.com/chainguard-images/images/tree/main/images/static) | **Maximum Security.** Chainguard-based (lowest CVEs). FIPS-compliant. No shell. |
-| `*-dev` | Distroless Debug | Includes busybox shell for debugging. FIPS-compliant. |
+| `latest` | [Distroless Base](https://github.com/GoogleContainerTools/distroless) | **Recommended.** FIPS-compliant. Minimal production image (glibc). Non-root, no shell. |
+| `canary` | Distroless Base | Bleeding edge build from MinIO master branch. FIPS-compliant. |
+| `*-secure` | [Chainguard Dynamic](https://github.com/chainguard-images/images/tree/main/images/glibc-dynamic) | **Maximum Security.** Chainguard-based (lowest CVEs). FIPS-compliant (glibc). No shell. |
+| `*-dev` | Distroless Base Debug | Includes busybox shell for debugging. FIPS-compliant. |
 | `*-secure-dev` | [Chainguard Wolfi](https://github.com/chainguard-images/images/tree/main/images/wolfi-base) | Wolfi-based with shell and APK. FIPS-compliant. |
 
 ## Quick Start
@@ -53,10 +53,10 @@ services:
 Our images come in a few flavors, all sharing the same **FIPS-compliant** core binary:
 
 ### `minio:latest`
-The defacto image. Based on **Distroless Static (Debian 12)**. Extremely small (~25MB), no shell, runs as non-root (UID 65532). Ideal for standard production use.
+The defacto image. Based on **Distroless Base (Debian 12)**. Extremely small (~25MB), no shell, runs as non-root (UID 65532). Ideal for standard production use.
 
 ### `minio:*-secure`
-Based on **Chainguard Static**. These images are hardened for high-security environments, offering the smallest possible attack surface and near-zero CVEs. Combined with FIPS compliance, this is the choice for regulated industries.
+Based on **Chainguard Dynamic**. These images are hardened for high-security environments, offering the smallest possible attack surface and near-zero CVEs. Combined with FIPS compliance, this is the choice for regulated industries.
 
 ### `minio:*-dev`
 For debugging. Includes a shell. **Not recommended for production** unless required for diagnostic sidecars.

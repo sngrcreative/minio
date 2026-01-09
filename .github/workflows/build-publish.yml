@@ -22,13 +22,13 @@ jobs:
       matrix:
         include:
           - flavor: standard
-            base: gcr.io/distroless/static-debian12:nonroot
+            base: gcr.io/distroless/base-debian12:nonroot
             suffix: ""
           - flavor: standard-dev
-            base: gcr.io/distroless/static-debian12:debug-nonroot
+            base: gcr.io/distroless/base-debian12:debug-nonroot
             suffix: "-dev"
           - flavor: secure
-            base: cgr.dev/chainguard/static:latest
+            base: cgr.dev/chainguard/glibc-dynamic:latest
             suffix: "-secure"
           - flavor: secure-dev
             base: cgr.dev/chainguard/wolfi-base:latest
