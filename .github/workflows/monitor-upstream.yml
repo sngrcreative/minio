@@ -29,13 +29,8 @@ jobs:
 
       - name: Push New Tag
         if: steps.check.outputs.new_version == 'true'
-        run: |
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
-          
-          if [[ -n "${{ secrets.TOKEN }}" ]]; then
-            git remote set-url origin https://${{ secrets.TOKEN }}@github.com/${{ github.repository }}.git
-          fi
-          
-          git tag ${{ steps.check.outputs.tag }}
-          git push origin ${{ steps.check.outputs.tag }}
+        uses: rickstaa/action-create-tag@v1
+        with:
+          tag: ${{ steps.check.outputs.tag }}
+          username: ${{ github.actor }}
+          github_token: ${{ secrets.TOKEN }}
