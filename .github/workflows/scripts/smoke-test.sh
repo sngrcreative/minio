@@ -17,7 +17,7 @@ DOWNLOADED_FILE="downloaded-smoke-file.txt"
 # We will replicate that behavior for the script to be portable.
 
 mc_cmd() {
-    docker run --network host --rm \
+    docker run --network host --rm -i \
         -e MC_HOST_${MC_ALIAS}="http://${ACCESS_KEY}:${SECRET_KEY}@127.0.0.1:9000" \
         minio/mc "$@"
 }
