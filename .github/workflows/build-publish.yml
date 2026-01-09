@@ -12,7 +12,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-push:
+  build-and-verify:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -128,7 +128,44 @@ jobs:
             org.opencontainers.image.url=https://github.com/sngrcreative/minio
             org.opencontainers.image.source=https://github.com/sngrcreative/minio
 
-      - name: Build and Push
+      - name: Build and Load (Verify)
+        if: steps.check.outputs.skip != 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false # Disable provenance to avoid untagged/unknown-arch images
+
+      - name: Start MinIO
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          docker run -d --name minio-test -p 9000:9000 -e MINIO_ROOT_USER=admin -e MINIO_ROOT_PASSWORD=password ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+
+      - name: Smoke Test
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          chmod +x .github/workflows/scripts/smoke-test.sh
+          ./.github/workflows/scripts/smoke-test.sh
+
+      - name: Run Trivy vulnerability scanner
+        if: steps.check.outputs.skip != 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Push (If Verified)
         if: steps.check.outputs.skip != 'true'
         uses: docker/build-push-action@v5
         with:
@@ -140,40 +177,4 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false # Disable provenance to avoid untagged/unknown-arch images
-
-  test-image:
-    needs: build-push
-    # Only run tests if we actually built something
-    if: |
-      always() && 
-      needs.build-push.result == 'success'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        flavor: [standard, secure]
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Start MinIO
-        run: |
-          if [[ "${{ github.event_name }}" == "push" ]]; then TAG="${{ github.ref_name }}"; else TAG="canary"; fi
-          [[ "${{ matrix.flavor }}" == "secure" ]] && SUFFIX="-secure" || SUFFIX=""
-          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}${SUFFIX}
-          docker run -d --name minio-test -p 9000:9000 -e MINIO_ROOT_USER=admin -e MINIO_ROOT_PASSWORD=password $IMAGE
-
-      - name: Smoke Test
-        run: |
-          chmod +x .github/workflows/scripts/smoke-test.sh
-          ./.github/workflows/scripts/smoke-test.sh
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
+          provenance: false
