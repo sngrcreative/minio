@@ -32,5 +32,10 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+          
+          if [[ -n "${{ secrets.TOKEN }}" ]]; then
+            git remote set-url origin https://${{ secrets.TOKEN }}@github.com/${{ github.repository }}.git
+          fi
+          
           git tag ${{ steps.check.outputs.tag }}
           git push origin ${{ steps.check.outputs.tag }}
