@@ -22,10 +22,10 @@ jobs:
       matrix:
         include:
           - flavor: standard
-            base: gcr.io/distroless/base-debian12:nonroot
+            base: gcr.io/distroless/base-debian13:nonroot
             suffix: ""
           - flavor: standard-dev
-            base: gcr.io/distroless/base-debian12:debug-nonroot
+            base: gcr.io/distroless/base-debian13:debug-nonroot
             suffix: "-dev"
           - flavor: secure
             base: cgr.dev/chainguard/glibc-dynamic:latest
@@ -62,8 +62,6 @@ jobs:
             echo "Release build or manual dispatch. Proceeding."
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
-
-
 
       - name: Set up Docker Buildx
         if: steps.check.outputs.skip != 'true'
@@ -158,10 +156,6 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: |
           docker run -d --name minio-test -p 9000:9000 -e MINIO_ROOT_USER=admin -e MINIO_ROOT_PASSWORD=password ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
-
-      - name: Debug MinIO Startup
-        if: failure() || success()
-        run: docker logs minio-test || true
 
       - name: Smoke Test
         if: steps.check.outputs.skip != 'true'

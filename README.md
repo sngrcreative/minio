@@ -53,7 +53,7 @@ services:
 Our images come in a few flavors, all sharing the same **FIPS-compliant** core binary:
 
 ### `minio:latest`
-The defacto image. Based on **Distroless Base (Debian 12)**. Extremely small (~25MB), no shell, runs as non-root (UID 65532). Ideal for standard production use.
+The defacto image. Based on **Distroless Base (Debian 13)**. Extremely small (~25MB), no shell, runs as non-root (UID 65532). Ideal for standard production use.
 
 ### `minio:*-secure`
 Based on **Chainguard Dynamic**. These images are hardened for high-security environments, offering the smallest possible attack surface and near-zero CVEs. Combined with FIPS compliance, this is the choice for regulated industries.
