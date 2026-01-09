@@ -1,0 +1,115 @@
+name: Build and Push MinIO
+
+on:
+  push:
+    tags: ['RELEASE.*']
+  schedule:
+    - cron: '0 20 * * *' # 03:00 AM Jakarta (WIB)
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: standard
+            base: gcr.io/distroless/static-debian12:nonroot
+            suffix: ""
+          - flavor: standard-dev
+            base: gcr.io/distroless/static-debian12:debug-nonroot
+            suffix: "-dev"
+          - flavor: secure
+            base: cgr.dev/chainguard/static:latest
+            suffix: "-secure"
+          - flavor: secure-dev
+            base: cgr.dev/chainguard/wolfi-base:latest
+            suffix: "-secure-dev"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine Tags
+        id: meta
+        run: |
+          SUFFIX="${{ matrix.suffix }}"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${{ github.ref_name }}"
+            echo "MINIO_REF=$TAG" >> $GITHUB_ENV
+            echo "TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}${SUFFIX},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest${SUFFIX}" >> $GITHUB_ENV
+          else
+            echo "MINIO_REF=master" >> $GITHUB_ENV
+            echo "TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:canary${SUFFIX}" >> $GITHUB_ENV
+          fi
+
+      - name: Generate Dockerfile
+        run: |
+          cat <<EOF > Dockerfile
+          FROM golang:1.24-alpine AS builder
+          ENV CGO_ENABLED=0 GOOS=linux
+          ARG TARGETARCH
+          WORKDIR /build
+          RUN apk add --no-cache git
+          RUN git clone https://github.com/minio/minio.git . && git checkout \${{ env.MINIO_REF }}
+          RUN GOARCH=\$TARGETARCH go build -ldflags="-s -w" -o minio .
+          RUN mkdir /data
+
+          FROM ${{ matrix.base }}
+          COPY --from=builder /build/minio /usr/bin/minio
+          COPY --from=builder --chown=65532:65532 /data /data
+          USER 65532:65532
+          EXPOSE 9000 9001
+          ENTRYPOINT ["/usr/bin/minio"]
+          CMD ["server", "/data", "--console-address", ":9001"]
+          EOF
+
+      - name: Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.TAGS }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  test-image:
+    needs: build-push
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        flavor: [standard, secure]
+    steps:
+      - name: Start MinIO
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then TAG="${{ github.ref_name }}"; else TAG="canary"; fi
+          [[ "${{ matrix.flavor }}" == "secure" ]] && SUFFIX="-secure" || SUFFIX=""
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}${SUFFIX}
+          docker run -d --name minio-test -p 9000:9000 -e MINIO_ROOT_USER=admin -e MINIO_ROOT_PASSWORD=password $IMAGE
+
+      - name: Smoke Test
+        run: |
+          sleep 10
+          docker run --network host --rm -e MC_HOST_local=http://admin:password@127.0.0.1:9000 minio/mc ls local
