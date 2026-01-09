@@ -63,9 +63,7 @@ jobs:
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Set up QEMU
-        if: steps.check.outputs.skip != 'true'
-        uses: docker/setup-qemu-action@v3
+
 
       - name: Set up Docker Buildx
         if: steps.check.outputs.skip != 'true'
@@ -88,11 +86,13 @@ jobs:
             TAG="${{ github.ref_name }}"
             echo "MINIO_REF=$TAG" >> $GITHUB_ENV
             echo "TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}${SUFFIX},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest${SUFFIX}" >> $GITHUB_ENV
+            echo "TAG=${TAG}${SUFFIX}" >> $GITHUB_ENV
           else
             UPSTREAM_SHA=$(git ls-remote https://github.com/minio/minio.git refs/heads/master | cut -f1)
             echo "MINIO_REF=master" >> $GITHUB_ENV
             echo "UPSTREAM_SHA=$UPSTREAM_SHA" >> $GITHUB_ENV
             echo "TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:canary${SUFFIX}" >> $GITHUB_ENV
+            echo "TAG=canary${SUFFIX}" >> $GITHUB_ENV
           fi
 
       - name: Generate Dockerfile
