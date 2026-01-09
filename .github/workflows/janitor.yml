@@ -1,0 +1,16 @@
+name: Registry Maintenance
+
+on:
+  schedule: 
+    - cron: '0 21 * * 6' # 04:00 AM Sunday Jakarta
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions: {packages: write}
+    steps:
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          delete-untagged: true

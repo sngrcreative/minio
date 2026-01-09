@@ -1,0 +1,36 @@
+name: Monitor Upstream MinIO
+
+on:
+  schedule:
+    - cron: '0 18 * * *' # 01:00 AM Jakarta (WIB)
+  workflow_dispatch:
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for New Version
+        id: check
+        run: |
+          LATEST_TAG=$(curl -s https://api.github.com/repos/minio/minio/releases/latest | jq -r .tag_name)
+          if git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
+            echo "new_version=false" >> $GITHUB_OUTPUT
+          else
+            echo "new_version=true" >> $GITHUB_OUTPUT
+            echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Push New Tag
+        if: steps.check.outputs.new_version == 'true'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag ${{ steps.check.outputs.tag }}
+          git push origin ${{ steps.check.outputs.tag }}
