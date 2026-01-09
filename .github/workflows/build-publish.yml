@@ -12,7 +12,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-push:
+  build-and-verify:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,13 +22,13 @@ jobs:
       matrix:
         include:
           - flavor: standard
-            base: gcr.io/distroless/static-debian12:nonroot
+            base: gcr.io/distroless/base-debian13:nonroot
             suffix: ""
           - flavor: standard-dev
-            base: gcr.io/distroless/static-debian12:debug-nonroot
+            base: gcr.io/distroless/base-debian13:debug-nonroot
             suffix: "-dev"
           - flavor: secure
-            base: cgr.dev/chainguard/static:latest
+            base: cgr.dev/chainguard/glibc-dynamic:latest
             suffix: "-secure"
           - flavor: secure-dev
             base: cgr.dev/chainguard/wolfi-base:latest
@@ -38,13 +38,37 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Check for Canary Changes
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            # Get latest upstream commit
+            UPSTREAM_SHA=$(git ls-remote https://github.com/minio/minio.git refs/heads/master | cut -f1)
+            echo "Upstream SHA: $UPSTREAM_SHA"
+            
+            # Get current image commit (using skopeo to avoid pulling 50MB+)
+            # We check the 'standard' flavor as the baseline for all canary builds
+            CURRENT_SHA=$(skopeo inspect docker://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:canary --format '{{index .Labels "org.opencontainers.image.revision"}}' || echo "none")
+            echo "Current Image SHA: $CURRENT_SHA"
+
+            if [[ "$UPSTREAM_SHA" == "$CURRENT_SHA" ]]; then
+              echo "Upstream matches current, but forcing build on schedule to pick up latest base image security updates."
+              echo "skip=false" >> $GITHUB_OUTPUT
+            else
+              echo "Changes detected or image missing."
+              echo "skip=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Release build or manual dispatch. Proceeding."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set up Docker Buildx
+        if: steps.check.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
+        if: steps.check.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -52,6 +76,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Determine Tags
+        if: steps.check.outputs.skip != 'true'
         id: meta
         run: |
           SUFFIX="${{ matrix.suffix }}"
@@ -59,24 +84,29 @@ jobs:
             TAG="${{ github.ref_name }}"
             echo "MINIO_REF=$TAG" >> $GITHUB_ENV
             echo "TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}${SUFFIX},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest${SUFFIX}" >> $GITHUB_ENV
+            echo "TAG=${TAG}${SUFFIX}" >> $GITHUB_ENV
           else
+            UPSTREAM_SHA=$(git ls-remote https://github.com/minio/minio.git refs/heads/master | cut -f1)
             echo "MINIO_REF=master" >> $GITHUB_ENV
+            echo "UPSTREAM_SHA=$UPSTREAM_SHA" >> $GITHUB_ENV
             echo "TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:canary${SUFFIX}" >> $GITHUB_ENV
+            echo "TAG=canary${SUFFIX}" >> $GITHUB_ENV
           fi
 
       - name: Generate Dockerfile
+        if: steps.check.outputs.skip != 'true'
         run: |
           cat <<EOF > Dockerfile
-          FROM golang:1.24-alpine AS builder
-          ENV CGO_ENABLED=0 GOOS=linux
-          ARG TARGETARCH
+          # Use Debian-based builder for CGO/BoringCrypto compatibility (glibc)
+          FROM golang:1.24-bookworm AS builder
+          ENV CGO_ENABLED=1 GOOS=linux GOEXPERIMENT=boringcrypto
           WORKDIR /build
-          RUN apk add --no-cache git
-          RUN git clone https://github.com/minio/minio.git . && git checkout \${{ env.MINIO_REF }}
-          RUN GOARCH=\$TARGETARCH go build -ldflags="-s -w" -o minio .
+          RUN git clone https://github.com/minio/minio.git . && git checkout ${{ env.MINIO_REF }}
+          RUN go build -ldflags="-s -w" -o minio .
           RUN mkdir /data
 
           FROM ${{ matrix.base }}
+          LABEL org.opencontainers.image.revision="${{ env.UPSTREAM_SHA }}"
           COPY --from=builder /build/minio /usr/bin/minio
           COPY --from=builder --chown=65532:65532 /data /data
           USER 65532:65532
@@ -85,31 +115,64 @@ jobs:
           CMD ["server", "/data", "--console-address", ":9001"]
           EOF
 
-      - name: Build and Push
+      - name: Docker Metadata
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          labels: |
+            org.opencontainers.image.title=SNGR Creative's MinIO Container Image
+            org.opencontainers.image.description=Hardened, FIPS-compliant (BoringCrypto), AMD64-only MinIO Object Storage images built on top of Distroless and Chainguard (Wolfi) foundations.
+            org.opencontainers.image.url=https://github.com/sngrcreative/minio
+            org.opencontainers.image.source=https://github.com/sngrcreative/minio
+
+      - name: Build and Load (Verify)
+        if: steps.check.outputs.skip != 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: true
-          tags: ${{ env.TAGS }}
-          platforms: linux/amd64,linux/arm64
+          file: Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false # Disable provenance to avoid untagged/unknown-arch images
 
-  test-image:
-    needs: build-push
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        flavor: [standard, secure]
-    steps:
+      - name: Run Trivy vulnerability scanner
+        if: steps.check.outputs.skip != 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
       - name: Start MinIO
+        if: steps.check.outputs.skip != 'true'
         run: |
-          if [[ "${{ github.event_name }}" == "push" ]]; then TAG="${{ github.ref_name }}"; else TAG="canary"; fi
-          [[ "${{ matrix.flavor }}" == "secure" ]] && SUFFIX="-secure" || SUFFIX=""
-          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}${SUFFIX}
-          docker run -d --name minio-test -p 9000:9000 -e MINIO_ROOT_USER=admin -e MINIO_ROOT_PASSWORD=password $IMAGE
+          docker run -d --name minio-test -p 9000:9000 -e MINIO_ROOT_USER=admin -e MINIO_ROOT_PASSWORD=password ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
 
       - name: Smoke Test
+        if: steps.check.outputs.skip != 'true'
         run: |
-          sleep 10
-          docker run --network host --rm -e MC_HOST_local=http://admin:password@127.0.0.1:9000 minio/mc ls local
+          chmod +x .github/workflows/scripts/smoke-test.sh
+          ./.github/workflows/scripts/smoke-test.sh
+
+      - name: Push (If Verified)
+        if: steps.check.outputs.skip != 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ env.TAGS }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
