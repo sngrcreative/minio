@@ -119,6 +119,17 @@ jobs:
           CMD ["server", "/data", "--console-address", ":9001"]
           EOF
 
+      - name: Docker Metadata
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          labels: |
+            org.opencontainers.image.title=SNGR Creative's MinIO Container Image
+            org.opencontainers.image.description=Hardened, multi-architecture (AMD64/ARM64) MinIO Object Storage images built on top of Distroless and Chainguard (Wolfi) foundations.
+            org.opencontainers.image.url=https://github.com/sngrcreative/minio
+            org.opencontainers.image.source=https://github.com/sngrcreative/minio
+
       - name: Build and Push
         if: steps.check.outputs.skip != 'true'
         uses: docker/build-push-action@v5
@@ -127,9 +138,11 @@ jobs:
           file: Dockerfile
           push: true
           tags: ${{ env.TAGS }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false # Disable provenance to avoid untagged/unknown-arch images
 
   test-image:
     needs: build-push
@@ -151,5 +164,5 @@ jobs:
 
       - name: Smoke Test
         run: |
-          sleep 10
-          docker run --network host --rm -e MC_HOST_local=http://admin:password@127.0.0.1:9000 minio/mc ls local
+          chmod +x .github/workflows/scripts/smoke-test.sh
+          ./.github/workflows/scripts/smoke-test.sh
