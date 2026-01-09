@@ -143,17 +143,6 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: false # Disable provenance to avoid untagged/unknown-arch images
 
-      - name: Start MinIO
-        if: steps.check.outputs.skip != 'true'
-        run: |
-          docker run -d --name minio-test -p 9000:9000 -e MINIO_ROOT_USER=admin -e MINIO_ROOT_PASSWORD=password ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
-
-      - name: Smoke Test
-        if: steps.check.outputs.skip != 'true'
-        run: |
-          chmod +x .github/workflows/scripts/smoke-test.sh
-          ./.github/workflows/scripts/smoke-test.sh
-
       - name: Run Trivy vulnerability scanner
         if: steps.check.outputs.skip != 'true'
         uses: aquasecurity/trivy-action@master
@@ -164,6 +153,21 @@ jobs:
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
+
+      - name: Start MinIO
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          docker run -d --name minio-test -p 9000:9000 -e MINIO_ROOT_USER=admin -e MINIO_ROOT_PASSWORD=password ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+
+      - name: Debug MinIO Startup
+        if: failure() || success()
+        run: docker logs minio-test || true
+
+      - name: Smoke Test
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          chmod +x .github/workflows/scripts/smoke-test.sh
+          ./.github/workflows/scripts/smoke-test.sh
 
       - name: Push (If Verified)
         if: steps.check.outputs.skip != 'true'
